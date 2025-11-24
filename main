@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>数钱模拟器 App</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- PWA 配置: 添加到主屏幕 (iOS & Android) -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="点钞游戏">
+    <!-- iOS 启动图标 (使用一个占位图，实际应用中应替换为高质量图标) -->
+    <link rel="apple-touch-icon" href="https://placehold.co/180x180/065f46/ffffff?text=CASH">
+    
+    <style>
+        /* 1. 全屏沉浸式设置 */
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden; 
+            background-color: #f3f4f6;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none; /* 禁用浏览器默认触控 */
+            user-select: none;
+        }
+
+        /* 2. 主容器 */
+        #app-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+        }
+        
+        /* 3. 顶部仪表盘 */
+        #dashboard {
+            padding: 2rem 1rem 0.5rem 1rem;
+            width: 100%;
+            z-index: 50;
+            text-align: center;
+        }
+        
+        /* 4. 钞票交互区 */
+        #interactive-area {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            width: 100%;
+            padding: 20px;
+        }
+
+        #banknote-wrapper {
+            width: 90%;
+            max-width: 450px;
+            aspect-ratio: 16 / 9; 
+            position: relative;
+            will-change: transform; 
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        
+        #banknote-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: drop-shadow(0 15px 20px rgba(0,0,0,0.2));
+            border-radius: 12px;
+            pointer-events: none;
+        }
+
+        /* 5. 游戏内浮动反馈动画 */
+        @keyframes float-fade-up {
+            0% { opacity: 1; transform: translate(-50%, -50%) scale(0.8); }
+            50% { opacity: 1; transform: translate(-50%, -150%) scale(1.2); }
+            100% { opacity: 0; transform: translate(-50%, -250%) scale(1); }
+        }
+        .feedback-text {
+            position: absolute;
+            left: 50%;
+            top: 40%;
+            transform: translate(-50%, -50%);
+            font-size: 3rem;
+            font-weight: 900;
+            color: #10b981;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            pointer-events: none;
+            z-index: 100;
+            animation: float-fade-up 0.6s ease-out forwards;
+        }
+        
+        /* 6. 底部控制区 */
+        #footer-controls {
+            padding: 1rem;
+            width: 100%;
+            text-align: center;
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            background: linear-gradient(to top, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0) 100%);
+        }
+
+        /* --- 庆祝全屏遮罩 --- */
+        #celebration-modal {
+            /* 默认隐藏 */
+        }
+
+        /* 阶段1：对话框动画 */
+        @keyframes pop-in {
+            0% { transform: scale(0.5); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .dialog-enter {
+            animation: pop-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        /* 金色边框闪烁 */
+        @keyframes border-pulse {
+            0% { border-color: #fbbf24; box-shadow: 0 0 20px rgba(251, 191, 36, 0.5); }
+            50% { border-color: #fef3c7; box-shadow: 0 0 40px rgba(251, 191, 36, 0.8); }
+            100% { border-color: #fbbf24; box-shadow: 0 0 20px rgba(251, 191, 36, 0.5); }
+        }
+        .golden-border {
+            animation: border-pulse 1.5s infinite;
+        }
+        
+        /* 阶段2：“来财”文字特效动画 */
+        @keyframes text-boom {
+            0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+            20% { transform: translate(-50%, -50%) scale(var(--target-scale)); opacity: 1; text-shadow: 0 0 30px rgba(253, 224, 71, 0.8); }
+            100% { transform: translate(-50%, -50%) scale(calc(var(--target-scale) * 1.2)); opacity: 0; filter: blur(4px); }
+        }
+
+        .lai-cai-text {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            font-weight: 900;
+            opacity: 0;
+            will-change: transform, opacity;
+            /* 动画由JS动态添加 */
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <!-- 顶部仪表盘 -->
+        <div id="dashboard">
+            <div class="inline-block bg-white/90 backdrop-blur-sm rounded-2xl px-6 py-4 shadow-xl border border-gray-100">
+                <p class="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">总金额</p>
+                <div class="flex items-baseline justify-center space-x-1">
+                    <span id="currency-symbol" class="text-2xl text-gray-400 font-medium">CHF</span>
+                    <span id="total-count" class="text-6xl font-black text-money-dark tracking-tight">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中部：钞票交互区 -->
+        <div id="interactive-area">
+            <div id="banknote-wrapper" class="cursor-grab">
+                <img id="banknote-image" 
+                     src="https://placehold.co/400x200/9d4edd/ffffff?text=CHF+1000%0A(瑞士法郎)"
+                     alt="当前钞票图片">
+            </div>
+            <!-- 引导提示 -->
+            <div id="tutorial-hint" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-40">
+                <div class="animate-pulse mb-4 text-gray-400">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14M5 12l7-7 7 7"></path></svg>
+                </div>
+                <p class="text-gray-400 font-medium">上下滑动点钞</p>
+            </div>
+        </div>
+
+        <!-- 底部控制区 -->
+        <div id="footer-controls">
+            <p id="currency-name" class="text-sm font-semibold text-indigo-600">瑞士法郎 (1000)</p>
+            <div class="flex gap-4">
+                <button id="reset-button" class="px-4 py-2 bg-red-500 text-white rounded-full text-sm font-medium shadow-md hover:bg-red-600 transition duration-150 active:scale-95">
+                    重置计数
+                </button>
+                <button id="switch-currency-button" class="px-4 py-2 bg-blue-500 text-white rounded-full text-sm font-medium shadow-md hover:bg-blue-600 transition duration-150 active:scale-95">
+                    切换货币
+                </button>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">← 左右滑动或点击切换货币 →</p>
+        </div>
+    </div>
+
+    <!-- 庆祝全屏容器 (初始隐藏) -->
+    <div id="celebration-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm">
+        
+        <!-- 阶段1：对话框 (Content) -->
+        <div id="celebration-content" class="dialog-enter p-8 rounded-2xl text-center relative w-11/12 max-w-md bg-gray-900 border-4 border-yellow-400 golden-border shadow-2xl cursor-pointer active:scale-95 transition-transform">
+            <h2 class="text-4xl font-black text-white mb-2 tracking-wider drop-shadow-md">
+                恭喜你！
+            </h2>
+            <p class="text-xl font-bold text-yellow-400 mb-8 drop-shadow-sm">
+                打败了2%的玩家！
+            </p>
+            
+            <p class="text-3xl text-white font-bold mb-8 animate-bounce">
+                💰 钱包鼓鼓 💰
+            </p>
+            
+            <div class="mt-4 text-sm text-gray-400">
+                (点击屏幕开启财运)
+            </div>
+        </div>
+
+        <!-- 阶段2：来财特效容器 (初始隐藏，绝对定位覆盖) -->
+        <div id="lai-cai-effects" class="hidden absolute inset-0 pointer-events-none flex items-center justify-center">
+             <span class="lai-cai-text text-7xl text-yellow-300" style="--target-scale: 1.5;">来财</span>
+             <span class="lai-cai-text text-8xl text-yellow-400" style="--target-scale: 2.5;">来财</span>
+             <span class="lai-cai-text text-9xl text-yellow-500" style="--target-scale: 3.5;">来财</span>
+        </div>
+    </div>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { 'money-green': '#10b981', 'money-dark': '#065f46' }
+                }
+            }
+        }
+        
+        // --- 核心数据 ---
+        const currencies = [
+            // 注意：第一个图片路径使用了您上传的文件URL
+            { name: "瑞士法郎", value: 1000, symbol: "CHF", image: "uploaded:Switzerland_SNB_1000_francs_2017.00.00_B360a_PNL_17_A_7441492_f-e1577556414496-1536x675.jpg-9fa0fa35-4e2e-44c1-a686-6f8ebe07a567", ratio: 1536 / 675 }, 
+            { name: "美元", value: 100, symbol: "USD", image: "https://placehold.co/400x200/1e40af/ffffff?text=USD+100", ratio: 400 / 200 },
+            { name: "欧元", value: 500, symbol: "EUR", image: "https://placehold.co/400x200/10b981/ffffff?text=EUR+500", ratio: 400 / 200 },
+            { name: "日元", value: 10000, symbol: "JPY", image: "https://placehold.co/400x200/f59e0b/000000?text=JPY+10000", ratio: 400 / 200 },
+            { name: "人民币", value: 100, symbol: "CNY", image: "https://placehold.co/400x200/dc2626/ffffff?text=CNY+100", ratio: 400 / 200 },
+        ];
+
+        // --- 状态变量 ---
+        let totalCount = 0;
+        let currentCurrencyIndex = 0;
+        let isDragging = false;
+        let startX = 0, startY = 0;
+        let currentX = 0, currentY = 0;
+        const COUNT_THRESHOLD = 80;
+        const SWITCH_THRESHOLD = 80;
+
+        // --- 速度挑战变量 ---
+        let countHistory = [];
+        let isCelebrationActive = false; 
+        const RATE_LIMIT_COUNT = 60; 
+        const RATE_LIMIT_TIME = 60000; 
+        
+        // --- DOM 元素 ---
+        const wrapper = document.getElementById('banknote-wrapper');
+        const imgEl = document.getElementById('banknote-image');
+        const totalEl = document.getElementById('total-count');
+        const symbolEl = document.getElementById('currency-symbol');
+        const nameEl = document.getElementById('currency-name');
+        const resetButton = document.getElementById('reset-button');
+        const switchButton = document.getElementById('switch-currency-button');
+        const tutorialHint = document.getElementById('tutorial-hint');
+        
+        // 庆祝相关 DOM
+        const celebrationModal = document.getElementById('celebration-modal');
+        const celebrationDialog = document.getElementById('celebration-content');
+        const laiCaiEffects = document.getElementById('lai-cai-effects');
+        const laiCaiTexts = document.querySelectorAll('.lai-cai-text');
+
+        // --- 庆祝逻辑 ---
+
+        // 1. 显示庆祝 (阶段1)
+        function showCelebration() {
+            if (isCelebrationActive) return;
+            isCelebrationActive = true;
+            
+            // 重置状态：显示对话框，隐藏特效
+            celebrationDialog.classList.remove('hidden');
+            laiCaiEffects.classList.add('hidden');
+            
+            // 显示模态框
+            celebrationModal.classList.remove('hidden');
+        }
+
+        // 2. 触发来财特效 (阶段2 - 点击对话框后调用)
+        function triggerLaiCaiSequence() {
+            // 隐藏对话框
+            celebrationDialog.classList.add('hidden');
+            // 显示特效容器
+            laiCaiEffects.classList.remove('hidden');
+
+            // 重置动画
+            laiCaiTexts.forEach(el => {
+                el.style.animation = 'none'; 
+                el.style.opacity = '0';
+            });
+
+            // 依次播放动画
+            let delay = 0;
+            const duration = 1.0; // 每个“来财”持续1秒
+
+            laiCaiTexts.forEach((el) => {
+                setTimeout(() => {
+                    el.style.animation = `text-boom ${duration}s ease-out forwards`;
+                }, delay * 1000);
+                delay += duration; // 紧接着播放下一个
+            });
+
+            // 动画总时长 = 3秒 (3个 * 1秒)
+            const totalTime = laiCaiTexts.length * duration * 1000;
+
+            // 3. 结束后关闭
+            setTimeout(() => {
+                closeCelebration();
+            }, totalTime + 200); // 加一点缓冲
+        }
+
+        // 3. 完全关闭
+        function closeCelebration() {
+            celebrationModal.classList.add('hidden');
+            isCelebrationActive = false;
+            countHistory = []; // 清空历史，重新开始挑战
+        }
+
+        // --- 点击事件处理 ---
+        // 支持 click 和 touchstart 以确保移动端瞬间响应
+        const handleCelebrationClick = (e) => {
+            if (!isCelebrationActive) return;
+            e.preventDefault(); // 防止穿透和延迟
+            e.stopPropagation();
+            
+            // 如果还在阶段1 (对话框显示中)，则进入阶段2
+            if (!celebrationDialog.classList.contains('hidden')) {
+                triggerLaiCaiSequence();
+            }
+        };
+
+        celebrationModal.addEventListener('click', handleCelebrationClick);
+        celebrationModal.addEventListener('touchstart', handleCelebrationClick, { passive: false });
+
+
+        // --- 核心游戏逻辑 ---
+
+        function updateUI() {
+            const cur = currencies[currentCurrencyIndex];
+            // 处理 uploaded 文件路径或 placeholder 路径
+            const imgPath = cur.image.startsWith('uploaded:') 
+                ? `__canvas_file_manager.get_file_url('${cur.image.split(':')[1]}')` 
+                : cur.image;
+            imgEl.src = imgPath;
+            
+            imgEl.onload = () => {
+                // 根据图片是否是占位符来确定比例 (这里使用了上传图片的原始比例)
+                const ratio = cur.image.includes('placeholder.co') ? 400 / 200 : 1536 / 675;
+                wrapper.style.aspectRatio = ratio;
+            }
+            symbolEl.textContent = cur.symbol;
+            nameEl.textContent = `${cur.name} (面额: ${cur.value.toLocaleString('en-US')})`;
+            totalEl.textContent = totalCount.toLocaleString('en-US');
+        }
+
+        function performCount() {
+            const cur = currencies[currentCurrencyIndex];
+            const now = Date.now();
+
+            // 挑战逻辑
+            countHistory.push(now);
+            countHistory = countHistory.filter(timestamp => now - timestamp < RATE_LIMIT_TIME);
+            if (countHistory.length >= RATE_LIMIT_COUNT && !isCelebrationActive) {
+                showCelebration();
+            }
+
+            // 动画与逻辑
+            wrapper.style.transition = 'transform 0.4s cubic-bezier(0.42, 0, 0.58, 1)';
+            wrapper.style.transform = `translate(${currentX}px, -150vh) rotate(${currentX * 0.1}deg) scale(0.9)`;
+
+            totalCount += cur.value;
+            showFeedback(`+${cur.value}`);
+            updateUI();
+
+            setTimeout(() => {
+                wrapper.style.transition = 'none'; 
+                wrapper.style.transform = 'translate(0, 50px) rotate(0deg) scale(0.9)'; 
+                wrapper.style.opacity = '0.5';
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        wrapper.style.transition = 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+                        wrapper.style.transform = 'translate(0, 0) rotate(0deg) scale(1)';
+                        wrapper.style.opacity = '1';
+                    }, 50);
+                });
+            }, 300); 
+        }
+
+        function switchCurrency(direction) {
+            const exitX = direction === 1 ? -150 : 150; 
+            wrapper.style.transition = 'transform 0.3s ease-in';
+            wrapper.style.transform = `translate(${exitX}vw, 0) rotate(${direction * -10}deg) scale(0.8)`;
+
+            setTimeout(() => {
+                currentCurrencyIndex = (currentCurrencyIndex + direction + currencies.length) % currencies.length;
+                updateUI();
+                wrapper.style.transition = 'none';
+                wrapper.style.transform = `translate(${exitX * -1}vw, 0) scale(0.8)`; 
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        wrapper.style.transition = 'transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+                        wrapper.style.transform = 'translate(0, 0) rotate(0deg) scale(1)';
+                    }, 50);
+                });
+            }, 300);
+        }
+
+        function showFeedback(text) {
+            const el = document.createElement('div');
+            el.className = 'feedback-text';
+            el.textContent = text;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 600);
+        }
+        
+        function getCoords(event) {
+            if (event.touches) return { x: event.touches[0].clientX, y: event.touches[0].clientY };
+            return { x: event.clientX, y: event.clientY };
+        }
+
+        function startSwipe(event) {
+            if (isCelebrationActive) return; // 弹窗激活时禁止游戏操作
+            isDragging = true;
+            wrapper.style.transition = 'none'; 
+            const coords = getCoords(event);
+            startX = coords.x;
+            startY = coords.y;
+            currentX = 0; currentY = 0;
+            tutorialHint.style.opacity = '0';
+        }
+
+        function moveSwipe(event) {
+            if (!isDragging) return;
+            event.preventDefault(); 
+            const coords = getCoords(event);
+            currentX = coords.x - startX;
+            currentY = coords.y - startY;
+            const rotation = currentX * 0.05; 
+            wrapper.style.transform = `translate(${currentX}px, ${currentY}px) rotate(${rotation}deg)`;
+        }
+
+        function endSwipe(event) {
+            if (!isDragging) return;
+            isDragging = false;
+            wrapper.style.transition = 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+
+            if (Math.abs(currentY) > COUNT_THRESHOLD && Math.abs(currentY) > Math.abs(currentX)) {
+                performCount(); 
+            } else if (Math.abs(currentX) > SWITCH_THRESHOLD) {
+                switchCurrency(currentX < -SWITCH_THRESHOLD ? 1 : -1);
+            } else {
+                wrapper.style.transform = 'translate(0, 0) rotate(0deg) scale(1)';
+            }
+            if (totalCount === 0) setTimeout(() => tutorialHint.style.opacity = '0.4', 500);
+        }
+        
+        function setupListeners() {
+            wrapper.addEventListener('mousedown', startSwipe);
+            document.addEventListener('mousemove', moveSwipe);
+            document.addEventListener('mouseup', endSwipe);
+            wrapper.addEventListener('touchstart', startSwipe, { passive: false });
+            wrapper.addEventListener('touchmove', moveSwipe, { passive: false });
+            wrapper.addEventListener('touchend', endSwipe, { passive: false });
+            
+            resetButton.addEventListener('click', () => {
+                totalCount = 0;
+                countHistory = []; 
+                updateUI();
+            });
+            switchButton.addEventListener('click', () => switchCurrency(1));
+        }
+
+        window.onload = () => {
+            setupListeners();
+            updateUI();
+        };
+    </script>
+</body>
+</html>
